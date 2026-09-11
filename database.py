@@ -6,9 +6,14 @@ from werkzeug.security import generate_password_hash, check_password_hash
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cam_edc.db")
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
+    try:
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
+    except Exception:
+        pass
     return conn
 
 def init_db():
@@ -382,37 +387,48 @@ def delete_user(user_id):
 
 def get_pending_users_count():
     """ចំនួនគណនីរង់ចាំការអនុម័ត"""
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM admins WHERE status = 'pending'")
-    count = cursor.fetchone()[0]
-    conn.close()
-    return count
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM admins WHERE status = 'pending'")
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+    except Exception:
+        return 0
 
 
 def get_user_stats():
     """ស្ថិតិអ្នកប្រើប្រាស់សម្រាប់ KPI cards"""
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM admins")
-    total = cursor.fetchone()[0]
-    
-    cursor.execute("SELECT COUNT(*) FROM admins WHERE status = 'pending'")
-    pending = cursor.fetchone()[0]
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM admins")
+        total = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM admins WHERE status = 'pending'")
+        pending = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM admins WHERE status = 'active'")
-    active = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM admins WHERE status = 'active'")
+        active = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM admins WHERE status IN ('rejected', 'suspended')")
-    inactive = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM admins WHERE status IN ('rejected', 'suspended')")
+        inactive = cursor.fetchone()[0]
 
-    conn.close()
-    return {
-        "total": total,
-        "pending": pending,
-        "active": active,
-        "inactive": inactive
-    }
+        conn.close()
+        return {
+            "total": total,
+            "pending": pending,
+            "active": active,
+            "inactive": inactive
+        }
+    except Exception:
+        return {
+            "total": 0,
+            "pending": 0,
+            "active": 0,
+            "inactive": 0
+        }
 
 
 

@@ -30,7 +30,7 @@ def seed_database():
     ]
 
     cursor.executemany("""
-    INSERT INTO customers (code, full_name, phone, national_id, address, area, meter_id, category, phase, initial_reading, status, status_reason, status_updated_at)
+    INSERT OR IGNORE INTO customers (code, full_name, phone, national_id, address, area, meter_id, category, phase, initial_reading, status, status_reason, status_updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     """, customers_data)
 
@@ -97,7 +97,7 @@ def seed_database():
             r_type = "smart_meter" if "commercial" in category else "manual"
 
             cursor.execute("""
-            INSERT INTO meter_readings (customer_id, reading_month, previous_reading, current_reading, usage_kwh, reading_date, reading_type, notes)
+            INSERT OR IGNORE INTO meter_readings (customer_id, reading_month, previous_reading, current_reading, usage_kwh, reading_date, reading_type, notes)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (cust_id, month, prev_r, curr_r, usage_kwh, r_date, r_type, f"កត់ត្រាប្រចាំខែ {month}"))
             reading_id = cursor.lastrowid
@@ -109,7 +109,7 @@ def seed_database():
             ref_code = f"TXN-{inv_counter}KH" if p_method else None
 
             cursor.execute("""
-            INSERT INTO invoices (invoice_no, customer_id, reading_id, billing_month, usage_kwh, base_amount_khr, maintenance_fee_khr, total_khr, total_usd, due_date, payment_status, payment_date, payment_method, payment_reference)
+            INSERT OR IGNORE INTO invoices (invoice_no, customer_id, reading_id, billing_month, usage_kwh, base_amount_khr, maintenance_fee_khr, total_khr, total_usd, due_date, payment_status, payment_date, payment_method, payment_reference)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 inv_no, cust_id, reading_id, month, usage_kwh,
@@ -125,7 +125,7 @@ def seed_database():
     ]
 
     cursor.executemany("""
-    INSERT INTO notifications (type, title, message, target_type, target_value, channel, status, sent_at)
+    INSERT OR IGNORE INTO notifications (type, title, message, target_type, target_value, channel, status, sent_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, notifications_data)
 

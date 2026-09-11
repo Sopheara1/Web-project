@@ -12,84 +12,141 @@ from database import (
 from seed_data import seed_database
 
 app = Flask(__name__)
-app.secret_key = "cam-edc-secret-key-2026"
+app.secret_key = os.environ.get("SECRET_KEY", "cam-edc-secret-key-2026")
 app.permanent_session_lifetime = timedelta(days=7)
 
+# ProxyFix for Railway / reverse proxy SSL termination
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
 # Ensure DB is created & seeded on startup
-init_db()
-seed_database()
+try:
+    init_db()
+    seed_database()
+except Exception as e:
+    print(f"Warning during DB startup: {e}")
 
 # Context processor for global template variables
 @app.context_processor
 def inject_globals():
-    today = date.today()
-    current_user = None
-    if "admin_id" in session:
-        current_user = {
-            "id": session.get("admin_id"),
-            "username": session.get("admin_username"),
-            "name": session.get("admin_name"),
-            "role": session.get("admin_role")
+    try:
+        today = date.today()
+        current_user = None
+        if "admin_id" in session:
+            current_user = {
+                "id": session.get("admin_id"),
+                "username": session.get("admin_username"),
+                "name": session.get("admin_name"),
+                "role": session.get("admin_role")
+            }
+        pending_users_count = get_pending_users_count()
+        return {
+            "current_date": today.strftime("%d-%m-%Y"),
+            "current_date_iso": today.strftime("%Y-%m-%d"),
+            "current_month": today.strftime("%Y-%m"),
+            "current_user": current_user,
+            "pending_users_count": pending_users_count
         }
-    pending_users_count = get_pending_users_count()
-    return {
-        "current_date": today.strftime("%d-%m-%Y"),
-        "current_date_iso": today.strftime("%Y-%m-%d"),
-        "current_month": today.strftime("%Y-%m"),
-        "current_user": current_user,
-        "pending_users_count": pending_users_count
-    }
+    except Exception as e:
+        return {
+            "current_date": "",
+            "current_date_iso": "",
+            "current_month": "",
+            "current_user": None,
+            "pending_users_count": 0
+        }
+
+# Global Exception Handler (Displays clean error card instead of generic 500)
+@app.errorhandler(500)
+@app.errorhandler(Exception)
+def handle_exception(e):
+    import traceback
+    tb = traceback.format_exc()
+    print(f"Unhandled Server Error: {tb}")
+    return f"""<!DOCTYPE html>
+<html lang="km">
+<head>
+    <meta charset="UTF-8">
+    <title>Server Error (500) | Cam-EDC</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #f8fafc; padding: 25px; margin: 0;">
+    <div style="max-width: 920px; margin: 30px auto; background: #1e293b; border: 1.5px solid #ef4444; border-radius: 12px; padding: 24px; box-shadow: 0 12px 30px rgba(0,0,0,0.4);">
+        <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 16px;">
+            <span style="font-size: 36px;">⚠️</span>
+            <div>
+                <h2 style="margin: 0; color: #f87171; font-size: 20px;">កំហុសប្រព័ន្ធ (Server Error 500)</h2>
+                <p style="margin: 4px 0 0; color: #94a3b8; font-size: 13px;">{type(e).__name__}: {str(e)}</p>
+            </div>
+        </div>
+        <div style="background: #090d16; border: 1px solid #334155; border-radius: 8px; padding: 16px; overflow-x: auto;">
+            <pre style="margin: 0; font-family: Consolas, monospace; font-size: 12.5px; color: #38bdf8; line-height: 1.5;">{tb}</pre>
+        </div>
+        <div style="margin-top: 18px; text-align: right;">
+            <a href="/login" style="display: inline-block; background: #0284c7; color: white; text-decoration: none; padding: 8px 18px; border-radius: 6px; font-weight: 500; font-size: 13px;">🔄 ត្រឡប់ទៅ Login</a>
+        </div>
+    </div>
+</body>
+</html>""", 500
 
 # ==========================================
 # AUTHENTICATION & ACCESS CONTROL (ផ្ទៀងផ្ទាត់ Admin)
 # ==========================================
 @app.before_request
 def require_login():
-    # Public endpoints/paths that do not require authentication
-    public_paths = ("/login", "/register", "/favicon.ico", "/api/users/register")
-    if request.path.startswith("/static") or request.path in public_paths:
+    try:
+        # Public endpoints/paths that do not require authentication
+        public_paths = ("/login", "/register", "/favicon.ico", "/api/users/register")
+        if request.path.startswith("/static") or request.path in public_paths:
+            return None
+        
+        if "admin_id" not in session:
+            if request.path.startswith("/api/"):
+                return jsonify({"success": False, "error": "សូមចូលគណនី Admin ជាមុនសិន!"}), 401
+            return redirect(url_for("login_page", next=request.path))
+    except Exception as e:
+        print(f"Error in require_login: {e}")
         return None
-    
-    if "admin_id" not in session:
-        if request.path.startswith("/api/"):
-            return jsonify({"success": False, "error": "សូមចូលគណនី Admin ជាមុនសិន!"}), 401
-        return redirect(url_for("login_page", next=request.path))
 
 @app.route("/login", methods=["GET", "POST"])
 def login_page():
-    if "admin_id" in session:
-        return redirect(url_for("dashboard"))
-    
-    error_msg = None
-    alert_type = "error"
-    username_val = ""
-    if request.method == "POST":
-        username_val = request.form.get("username", "").strip()
-        password = request.form.get("password", "").strip()
-        remember_me = request.form.get("remember_me")
-
-        auth_res = verify_admin_credentials(username_val, password)
-        if auth_res.get("success"):
-            admin = auth_res["user"]
-            session.clear()
-            session["admin_id"] = admin["id"]
-            session["admin_username"] = admin["username"]
-            session["admin_name"] = admin["full_name"]
-            session["admin_role"] = admin["role"]
-            if remember_me:
-                session.permanent = True
-            else:
-                session.permanent = False
-            
-            next_url = request.args.get("next")
-            if next_url and next_url.startswith("/") and not next_url.startswith("/login"):
-                return redirect(next_url)
+    try:
+        if "admin_id" in session:
             return redirect(url_for("dashboard"))
-        else:
-            error_msg = auth_res.get("message", "ឈ្មោះគណនី ឬលេខសម្ងាត់មិនត្រឹមត្រូវ!")
-            alert_type = auth_res.get("status", "error")
-    
-    return render_template("login.html", error_msg=error_msg, alert_type=alert_type, username_val=username_val)
+        
+        error_msg = None
+        alert_type = "error"
+        username_val = ""
+        if request.method == "POST":
+            username_val = request.form.get("username", "").strip()
+            password = request.form.get("password", "").strip()
+            remember_me = request.form.get("remember_me")
+
+            auth_res = verify_admin_credentials(username_val, password)
+            if auth_res.get("success"):
+                admin = auth_res["user"]
+                session.clear()
+                session["admin_id"] = admin["id"]
+                session["admin_username"] = admin["username"]
+                session["admin_name"] = admin["full_name"]
+                session["admin_role"] = admin["role"]
+                if remember_me:
+                    session.permanent = True
+                else:
+                    session.permanent = False
+                
+                next_url = request.args.get("next")
+                if next_url and next_url.startswith("/") and not next_url.startswith("/login"):
+                    return redirect(next_url)
+                return redirect(url_for("dashboard"))
+            else:
+                error_msg = auth_res.get("message", "ឈ្មោះគណនី ឬលេខសម្ងាត់មិនត្រឹមត្រូវ!")
+                alert_type = auth_res.get("status", "error")
+        
+        return render_template("login.html", error_msg=error_msg, alert_type=alert_type, username_val=username_val)
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        return f"<h3>System Error on Login: {e}</h3><pre>{tb}</pre>", 500
 
 @app.route("/logout")
 def logout():
